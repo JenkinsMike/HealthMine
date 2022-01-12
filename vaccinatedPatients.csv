@@ -1,0 +1,4 @@
+patientId,vaccineRegimen,vaccineAdministrationCompletionDate
+4,Pfizer,2021-01-18
+11,Moderna,2021-01-25
+15,Janssen,2021-01-01
