@@ -46,7 +46,7 @@ with
     select
       patient_id,
       vaccine_code,
-      to_date(administration_date, 'YYYY-MM-DD') as administration_date
+      administration_date
     from (
       select 1 as patient_id, '0001A' as vaccine_code, '2021-01-01' as administration_date from dual union all
       select 2 as patient_id, '0002A' as vaccine_code, '2021-01-01' as administration_date from dual union all
@@ -74,85 +74,66 @@ with
       select 14 as patient_id, '0012A' as vaccine_code, '2021-08-01' as administration_date from dual union all
       select 15 as patient_id, '59676058015' as vaccine_code, '2021-01-01' as administration_date from dual
     )
+  ),
+  cte_group_code_checker as (
+  -- Grab important things like patient_id, administration_date, vaccince_group,
+  --  and create a new column for Vaccing Regiment
+  -- JOIN cte_vaccination_administration to cte_vaccine_groups on vaccine_code
+      select 
+        patient_id
+      , case when vg.vaccine_group_name = 'Janssen' 
+             then 'Johson and Johnson' 
+             else SubStr(vaccine_group_name, 1, INSTR(vg.vaccine_group_name,' ')) 
+        end as regiment
+      , administration_date
+      , vaccine_group_name
+      from cte_vaccination_administration va
+      join cte_vaccine_groups vg 
+      on va.vaccine_code = vg.vaccine_code
+  ),
+  cte_self_merge as (
+  -- Again, grab important things, but unite them.  Grab patient_id, regiment,
+  --  an administration_date as first_admin_date, a group_name as first_group_name,
+  --  and the same for the second administration, and do some date-math to find
+  --  out how many days apart first_ and second_ administration dates are.
+  -- LOJ cte_group_code_checker to itself on patient_id, regiment, and 
+  --  vaccine_group_name on "First" grouping, "Second" grouping, or single-dose
+  --  grouping
+  -- FILTER where the second administration_date is greater than the first
+  --  AND first administration_date is not equal to the second administration_date
+  --  while also not being the single-dose regiment
+  --  OR the single-does regiment (such that we get a phantom second-dose date)
+      select 
+        a.patient_id
+      , a.regiment
+      , a.administration_date as first_admin_date
+      , a.vaccine_group_name  as first_group_name
+      , b.administration_date as second_admin_date
+      , b.vaccine_group_name  as second_group_name
+      , TO_DATE(b.administration_date, 'YYYY-MM-DD') - TO_DATE(a.administration_date, 'YYYY-MM-DD') as date_diff
+      from cte_group_code_checker a
+      left outer join cte_group_code_checker b 
+      on a.patient_id = b.patient_id 
+        and a.regiment = b.regiment
+        and (a.vaccine_group_name like '%First%'  or a.vaccine_group_name like '%Janssen%')
+        and (b.vaccine_group_name like '%Second%' or b.vaccine_group_name like '%Janssen%')
+      where b.administration_date > a.administration_date
+        and (a.administration_date != b.administration_date and a.regiment != 'Johson and Johnson')
+        or a.regiment = 'Johson and Johnson'
   )
---  Replace the following with your query, which can define any number of additional CTEs and should ultimately
---  select the following columns in the terminal query:
---
---  patient_id
---  regimen (null, 'Pfizer', 'Moderna', or 'Janssen')
---  vaccination_date (null, date string in a format of your choosing)
-
-drop table if exists cte_vaccine_groups;
-drop table if exists cte_vaccination_administration;
-drop table if exists PatientFirstDose;
-drop table if exists PatientSecondDose;
-drop table if exists PatientFirstPfizerDosePlusDelta;
-drop table if exists PatientFirstModernaDosePlusDelta;
-drop table if exists PatientFirstPfizerDosePlusDelta2;
-drop table if exists PatientFirstModernaDosePlusDelta2;
-drop table if exists PatientFirstJnJDosePlusDelta2;
-drop table if exists PatientSecondPfizerDoseMinusDelta;
-drop table if exists PatientSecondModernaDoseMinusDelta;
--- Replace the following with your query, which can define any number of additional CTEs and should ultimately
--- select the following columns in the terminal query:
--- --
--- patient_id
--- regimen (null, 'Pfizer', 'Moderna', or 'Janssen')
--- vaccination_date (null, date string in a format of your choosing)
-
--- So, I tried to learn Oracle really quick and it felt like I was wasting a little bit too much time, so I pivoted.
--- And I made the tables in MySQL. See below.
-create table cte_vaccine_groups (vaccine_group_name varchar(32) default null, vaccine_code varchar(32));
-insert into cte_vaccine_groups (vaccine_group_name, vaccine_code) values ('Pfizer First Dose', '0001A'), ('Pfizer First Dose', '91300'), ('Pfizer First Dose', '5926710001'), ('Pfizer First Dose', '59267100001'), ('Pfizer First Dose', '59267100002'), ('Pfizer First Dose', '59267100003'), ('Pfizer Second Dose', '0002A'), ('Pfizer Second Dose', '91300'), ('Pfizer Second Dose', '5926710001'), ('Pfizer Second Dose', '59267100001'), ('Pfizer Second Dose', '59267100002'), ('Pfizer Second Dose', '59267100003'), ('Moderna First Dose', '0011A'), ('Moderna First Dose', '91301'), ('Moderna First Dose', '8077727310'), ('Moderna First Dose', '80777027310'), ('Moderna First Dose', '80777027399'), ('Moderna Second Dose', '0012A'), ('Moderna Second Dose', '91301'), ('Moderna Second Dose', '8077727310'), ('Moderna Second Dose', '80777027310'), ('Moderna Second Dose', '80777027399'), ('Janssen', '91303'), ('Janssen', '0031A'), ('Janssen', '59676058005'), ('Janssen', '59676058015');
-create table cte_vaccination_administration (patient_id int(4) default null, vaccine_code varchar(32), administration_date date default null);
-insert into cte_vaccination_administration (patient_id, vaccine_code, administration_date) values ('1', '0001A', '2021-01-01'), ('2', '0002A', '2021-01-01'), ('3', '0001A', '2021-01-01'), ('3', '0002A', '2021-01-17'), ('4', '91300', '2021-01-01'), ('4', '5926710001', '2021-01-18'), ('5', '0002A', '2021-01-01'), ('5', '91300', '2021-03-01'), ('6', '59267100003', '2021-04-01'), ('6', '0001A', '2021-06-01'), ('7', '0002A', '2021-07-01'), ('7', '0002A', '2021-08-01'), ('8', '0011A', '2021-01-01'), ('9', '0012A', '2021-01-01'), ('10', '0011A', '2021-01-01'), ('10', '0012A', '2021-01-24'), ('11', '91301', '2021-01-01'), ('11', '8077727310', '2021-01-25'), ('12', '0012A', '2021-01-01'), ('12', '91301', '2021-03-01'), ('13', '80777027399', '2021-04-01'), ('13', '0011A', '2021-06-01'), ('14', '0012A', '2021-07-01'), ('14', '0012A', '2021-08-01'), ('15', '59676058015', '2021-01-01');
--- I tried a few different attempts.
--- Create a table of (assumed) valid first doses of Pfizer, then add a col to represent the minimum future date that
--- full vaccination would be considered (to be used later with maths).create temporary table if not exists PatientFirstPfizerDosePlusDelta as (select distinct va.patient_id, vg.vaccine_code, vg.vaccine_group_name, va.administration_date, ADDDATE(va.administration_date, 17) '17 Days Later'from cte_vaccination_administration va , cte_vaccine_groups vgwhere va.vaccine_code = vg.vaccine_codeand vg.vaccine_code = (select va2.vaccine_code from cte_vaccine_groups va2, cte_vaccine_groups vg where va2.vaccine_group_name = 'pfizer First Dose' and vg.vaccine_code = va2.vaccine_code limit 1)order by va.patient_id, va.administration_date);
--- Create a table of (assumed) valid second doses of Pfizer, then add a col to represent the minimum paste date that
--- full vaccination would be considered (to be used later with maths).
--- this one didn't work correctly. cross-population was starting here.
-create temporary table if not exists PatientSecondPfizerDoseMinusDelta as ( select distinct va.patient_id, vg.vaccine_code, vg.vaccine_group_name, va.administration_date, SUBDATE(va.administration_date, INTERVAL 17 DAY) '17 Days Earlier' from cte_vaccination_administration va , cte_vaccine_groups vg where va.vaccine_code = vg.vaccine_code and vg.vaccine_code = (select va2.vaccine_code from cte_vaccine_groups va2, cte_vaccine_groups vg where va2.vaccine_group_name = 'Pfizer Second Dose' and vg.vaccine_code = va2.vaccine_code limit 1) order by va.patient_id, va.administration_date);
--- Create a table of (assumed) valid first doses of Moderna, then add a col to represent the minimum future date that
--- full vaccination would be considered (to be used later with maths).
-create
-temporary table if not exists PatientFirstModernaDosePlusDelta as ( select distinct va.patient_id, vg.vaccine_code, vg.vaccine_group_name, va.administration_date, ADDDATE(va.administration_date, 24) '24 Days Later' from cte_vaccination_administration va , cte_vaccine_groups vg where va.vaccine_code = vg.vaccine_code and vg.vaccine_code = (select va2.vaccine_code from cte_vaccine_groups va2, cte_vaccine_groups vg where va2.vaccine_group_name = 'Moderna First Dose' and vg.vaccine_code = va2.vaccine_code limit 1) order by va.patient_id, va.administration_date);
--- Create a table of (assumed) valid second doses of Moderna, then add a col to represent the minimum paste date that
--- full vaccination would be considered (to be used later with maths).
--- this one didn't work correctly. cross-population was starting here.
-create
-temporary table if not exists PatientSecondModernaDoseMinusDelta as ( select distinct va.patient_id, vg.vaccine_code, vg.vaccine_group_name, va.administration_date, SUBDATE(va.administration_date, INTERVAL 24 DAY) '24 Days Earlier' from cte_vaccination_administration va , cte_vaccine_groups vg where va.vaccine_code = vg.vaccine_code and vg.vaccine_code = (select va2.vaccine_code from cte_vaccine_groups va2, cte_vaccine_groups vg where va2.vaccine_group_name = 'Moderna Second Dose' and vg.vaccine_code = va2.vaccine_code limit 1 ) order by va.patient_id, va.administration_date);
--- Create a table of (assumed) valid first doses of Janssen.
-create
-temporary table if not exists PatientFirstJnJDosePlusDelta as ( select distinct va.patient_id, vg.vaccine_code, vg.vaccine_group_name, va.administration_date from cte_vaccination_administration va , cte_vaccine_groups vg where va.vaccine_code = vg.vaccine_code and vg.vaccine_group_name = 'Janssen' order by va.patient_id, va.administration_date);
-select *
-from PatientFirstPfizerDosePlusDelta;
-select *
-from PatientFirstModernaDosePlusDelta;
-select *
-from PatientFirstJnJDosePlusDelta;
-select *
-from PatientSecondPfizerDoseMinusDelta;
-select *
-from PatientSecondModernaDoseMinusDelta;
--- It is at this point that I have to admit that I have forgotten more than I thought when it came to writing accurate
--- SQLs. I considered trying to create Keys. I considered trying to just do this all in an H2 in memory database.
--- I debated setting up a local docker container of MariaDBs, using Flyway to create two tables, create, basically, a
--- DAO and a Repo using SpringBoot, and doing it all in the code (which is how I would do it in a real-life scenario),
--- but that felt like the solution would be in opposition to the spirit of this ask. I did have some attempts before 
--- that used the from -> join -> on syntax, but I dropped that attempt when I started using intelliJ instead of that
--- online tool.
--- 
--- This bums me out pretty hard. I had some ideas to do some date-math. If I had another day, maybe I would get a bit
--- closer, but it is time to submit this to you all.  And now the formatting is all off...sigh.  I really do not like
--- that I am turning in something like this, but I gave myself a deadline and I have to give you all the respect 
--- deserved and turn this in.
--- 
--- Thank you for your consideration. Despite the result here, I am still confident in my abilities, especially in the 
--- CLI.
--- 
--- Thanks!
-
+  -- SELECT patient_id, regiment, and second_admin_date
+  -- FROM merged result of two base ctes
+  -- WHERE date-difference business rules apply.
+  -- ORDER BY oldest fully vaccinated date.
+  select
+    patient_id        as "Patient ID"
+  , regiment          as "Vaccine Regiment"
+  , second_admin_date as "Vaccincation Date"
+  from cte_self_merge
+  where (TRIM(regiment) = 'Johson and Johnson'
+     or (TRIM(regiment) = 'Pfizer'  and date_diff >= 17)
+     or (TRIM(regiment) = 'Moderna' and date_diff >= 24))
+  order by second_admin_date
 ```
 
 # Exercise
@@ -160,3 +141,5 @@ from PatientSecondModernaDoseMinusDelta;
 Using the above basis query, replace the terminal query (`select * from ...`) with additional CTEs that you deem necessary and a terminal query that selects the documented columns.
 
 In your submission back to HealthMine, please include the entirety of your working query.
+
+https://dbfiddle.uk/?rdbms=oracle_18&fiddle=8e2a19a8b7b8f4a98405baea165fd271
